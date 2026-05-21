@@ -10,8 +10,8 @@ npx skills add smithery-ai/render-markdown
 
 ## Two modes
 
-- **One-shot preview** — render once to `/tmp/preview.html` and open it in the browser. Static, self-contained file.
-- **Live editor** — spin up a tiny local server with a CodeMirror editor (read mode + raw mode, `Cmd-E` to toggle). Edits autosave to the source file; the preview hot-reloads.
+- **One-shot preview**: render once to `/tmp/preview.html` and open it in the browser. Static, self-contained file.
+- **Live editor**: spin up a tiny local server with a CodeMirror editor (read mode + raw mode, `Cmd-E` to toggle). Edits autosave to the source file; the preview hot-reloads.
 
 ## How it works
 

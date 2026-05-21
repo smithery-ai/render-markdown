@@ -27,6 +27,7 @@ import styles from "./styles.css" with { type: "text" }
 import themeToggle from "./theme-toggle.html" with { type: "text" }
 import mermaidInit from "./mermaid-init.js" with { type: "text" }
 import editorHtml from "./editor.html" with { type: "text" }
+import copyButton from "./copy-button.js" with { type: "text" }
 
 marked.use(markedFootnote())
 marked.use({
@@ -61,7 +62,7 @@ async function renderToHtml(src: string, opts: { embed?: boolean } = {}): Promis
 	const h1Title = body.match(/^#\s+(.+)$/m)?.[1]?.trim()
 	const title = (fmTitle ?? h1Title ?? "doc").replace(/</g, "&lt;")
 
-	const mermaidBlock = /mermaid/.test(rendered)
+	const mermaidBlock = /<pre class="mermaid">/.test(rendered)
 		? `<script type="module">${mermaidInit}</script>`
 		: ""
 	const fmBlock = fm
@@ -81,6 +82,7 @@ ${themeToggle}
 ${fmBlock}
 ${rendered}
 ${mermaidBlock}
+<script>${copyButton}</script>
 </body></html>`
 }
 

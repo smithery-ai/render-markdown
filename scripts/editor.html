@@ -70,6 +70,12 @@
 <div class="pane preview-pane"><iframe id="preview" src="/preview?embed=1"></iframe></div>
 
 <div class="toggle-row">
+  <div class="toggle-group" id="refresh-group" role="group" aria-label="Refresh">
+    <button id="refresh-btn" aria-label="Refresh preview" title="Refresh preview">
+      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    </button>
+  </div>
+  <div class="divider"></div>
   <div class="toggle-group" id="mode-toggle" role="group" aria-label="Mode">
     <button data-mode-set="live" aria-label="Read" title="Read (rendered)">
       <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -230,6 +236,16 @@ window.addEventListener("keydown", e => {
     e.preventDefault()
     setMode(body.dataset.mode === "raw" ? "live" : "raw")
   }
+})
+
+// Refresh — re-fetch source into CodeMirror AND reload the preview iframe.
+// Use this when something else (Claude, your editor, git) has touched the file.
+document.getElementById("refresh-btn").addEventListener("click", async () => {
+  showStatus("Refreshing…")
+  const fresh = await fetch("/api/source", { cache: "no-store" }).then(r => r.text())
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: fresh } })
+  try { preview.contentWindow.location.reload() } catch {}
+  showStatus("Refreshed")
 })
 </script>
 </body></html>

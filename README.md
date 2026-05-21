@@ -1,6 +1,6 @@
 # render-markdown
 
-Why choose between markdown and HTML when you can render markdown in HTML? This skill lets your local coding agents render your markdown files with rich preview + a live CodeMirror editor. Supports task lists, footnotes, mermaid and more. Install the skill and type `/render-markdown`.
+Why choose between markdown and HTML when you can render markdown in HTML? This skill lets your local coding agents render your markdown files with a rich preview + a live CodeMirror editor. Supports task lists, footnotes, mermaid and more. Install the skill and type `/render-markdown`.
 
 ## Install
 
@@ -16,14 +16,8 @@ npx skills add smithery-ai/render-markdown
 ## How it works
 
 ```
-input.md
-├── strip frontmatter
-├── marked (GFM + footnotes)
-│   ├── highlight.js
-│   └── mermaid (CDN, lazy)
-└── output
-    ├── /tmp/preview.html → open          (one-shot)
-    └── localhost:7780/   → CodeMirror    (live)
+input.md ──▶ marked + hljs + mermaid ──┬──▶ /tmp/preview.html   (one-shot, open in browser)
+                                       └──▶ localhost:7780      (live, CodeMirror editor)
 ```
 
 - Footnotes, GFM task lists, tables, mermaid diagrams, syntax-highlighted code

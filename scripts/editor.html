@@ -1,0 +1,235 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>render-markdown</title>
+<script>
+  // Pre-paint theme apply (avoids FOUC).
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (t && t !== 'system') document.documentElement.dataset.theme = t;
+  })();
+</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    color-scheme: light dark;
+    --bg: #fbf8f3;
+    --fg: #1c1814;
+    --fg-muted: rgba(28,24,20,0.6);
+    --fg-quiet: rgba(28,24,20,0.4);
+    --border: rgba(28,24,20,0.12);
+    --surface-soft: rgba(28,24,20,0.05);
+    --accent: #b8521a;
+    --accent-selection: rgba(184,82,26,0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14110d; --fg: #ede4d3;
+      --fg-muted: rgba(237,228,211,0.6); --fg-quiet: rgba(237,228,211,0.4);
+      --border: rgba(237,228,211,0.14);
+      --surface-soft: rgba(237,228,211,0.06);
+      --accent: #e89060; --accent-selection: rgba(232,144,96,0.22);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14110d; --fg: #ede4d3;
+    --fg-muted: rgba(237,228,211,0.6); --fg-quiet: rgba(237,228,211,0.4);
+    --border: rgba(237,228,211,0.14);
+    --surface-soft: rgba(237,228,211,0.06);
+    --accent: #e89060; --accent-selection: rgba(232,144,96,0.22);
+  }
+
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: 14px -apple-system, system-ui, sans-serif; transition: background .15s, color .15s; }
+  .pane { height: 100vh; overflow: hidden; position: relative; }
+  /* Center the raw editor column like the rendered preview is. */
+  .editor-pane { display: none; max-width: 820px; margin: 0 auto; }
+  .preview-pane iframe { width: 100%; height: 100%; border: 0; background: transparent; }
+  body[data-mode="raw"] .editor-pane { display: block; }
+  body[data-mode="raw"] .preview-pane { display: none; }
+  body[data-mode="live"] .preview-pane { display: block; }
+
+  /* Toggle row: [mode] │ [theme] at top-right. */
+  .toggle-row { position: fixed; top: 18px; right: 18px; display: flex; align-items: center; gap: 4px; z-index: 200; }
+  .toggle-row .divider { width: 1px; height: 14px; background: var(--border); margin: 0 8px; }
+  .toggle-row button { background: transparent; border: 0; color: var(--fg-quiet); width: 22px; height: 22px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; transition: color .15s; }
+  .toggle-row button:hover { color: var(--fg-muted); }
+  .toggle-row button[aria-pressed="true"] { color: var(--fg); }
+  .toggle-row svg { width: 15px; height: 15px; stroke: currentColor; stroke-width: 1.7; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+  .toggle-group { display: flex; gap: 4px; }
+
+  .status { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); font: 11px ui-monospace, "SF Mono", Menlo, monospace; color: var(--fg-quiet); background: color-mix(in srgb, var(--bg) 85%, transparent); padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); pointer-events: none; opacity: 0; transition: opacity .2s; z-index: 1000; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .status.visible { opacity: 1; }
+
+  .cm-editor { height: 100%; }
+  .cm-scroller { font: 14px/1.55 ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace; }
+  .cm-editor.cm-focused { outline: none; }
+  .cm-gutters { border-right: 1px solid var(--border) !important; background: transparent !important; }
+  .cm-content { padding: 32px 32px 96px !important; }
+</style>
+</head><body data-mode="live">
+<div class="pane editor-pane" id="editor"></div>
+<div class="pane preview-pane"><iframe id="preview" src="/preview?embed=1"></iframe></div>
+
+<div class="toggle-row">
+  <div class="toggle-group" id="mode-toggle" role="group" aria-label="Mode">
+    <button data-mode-set="live" aria-label="Read" title="Read (rendered)">
+      <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    </button>
+    <button data-mode-set="raw" aria-label="Edit" title="Edit (raw markdown)">
+      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+    </button>
+  </div>
+  <div class="divider"></div>
+  <div class="toggle-group" id="theme-toggle" role="group" aria-label="Theme">
+    <button data-theme-set="light" aria-label="Light" title="Light">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+    </button>
+    <button data-theme-set="system" aria-label="System" title="System">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+    </button>
+    <button data-theme-set="dark" aria-label="Dark" title="Dark">
+      <svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</div>
+
+<div class="status" id="status">Saved</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "@codemirror/state":           "https://esm.sh/@codemirror/state@6.4.1",
+    "@codemirror/view":            "https://esm.sh/@codemirror/view@6.26.3?deps=@codemirror/state@6.4.1",
+    "@codemirror/language":        "https://esm.sh/@codemirror/language@6.10.2?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3",
+    "@codemirror/commands":        "https://esm.sh/@codemirror/commands@6.6.0?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.2",
+    "@codemirror/search":          "https://esm.sh/@codemirror/search@6.5.6?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3",
+    "@codemirror/autocomplete":    "https://esm.sh/@codemirror/autocomplete@6.16.0?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.2",
+    "@codemirror/lint":            "https://esm.sh/@codemirror/lint@6.7.1?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3",
+    "codemirror":                  "https://esm.sh/codemirror@6.0.1?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.2,@codemirror/commands@6.6.0,@codemirror/search@6.5.6,@codemirror/autocomplete@6.16.0,@codemirror/lint@6.7.1",
+    "@codemirror/lang-markdown":   "https://esm.sh/@codemirror/lang-markdown@6.3.0?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.2",
+    "@codemirror/theme-one-dark":  "https://esm.sh/@codemirror/theme-one-dark@6.1.2?deps=@codemirror/state@6.4.1,@codemirror/view@6.26.3,@codemirror/language@6.10.2"
+  }
+}
+</script>
+<script type="module">
+import { EditorView, basicSetup } from "codemirror"
+import { markdown } from "@codemirror/lang-markdown"
+import { syntaxHighlighting, HighlightStyle } from "@codemirror/language"
+import { tags as t } from "https://esm.sh/@lezer/highlight@1.2.0"
+import { EditorState } from "@codemirror/state"
+
+const status = document.getElementById("status")
+const preview = document.getElementById("preview")
+const body = document.body
+const html = document.documentElement
+
+function showStatus(msg) {
+  status.textContent = msg
+  status.classList.add("visible")
+  clearTimeout(showStatus._t)
+  showStatus._t = setTimeout(() => status.classList.remove("visible"), 1200)
+}
+
+async function save(content) {
+  showStatus("Saving…")
+  await fetch("/api/save", { method: "POST", body: content, headers: { "content-type": "text/plain" } })
+  showStatus("Saved")
+}
+
+const initial = await fetch("/api/source").then(r => r.text())
+
+// CodeMirror — single theme, driven by CSS vars so it reskins automatically
+// when the outer page's data-theme changes. No theme-swap dispatch needed.
+const cmTheme = EditorView.theme({
+  "&":                            { backgroundColor: "transparent", height: "100%", color: "var(--fg)" },
+  ".cm-content":                  { caretColor: "var(--accent)" },
+  ".cm-cursor, .cm-dropCursor":   { borderLeftColor: "var(--accent)" },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection":
+                                  { backgroundColor: "var(--accent-selection)" },
+  ".cm-gutters":                  { backgroundColor: "transparent", color: "var(--fg-quiet)", border: "0" },
+  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
+  ".cm-tooltip":                  { backgroundColor: "var(--bg)", color: "var(--fg)", border: "1px solid var(--border)" },
+  ".cm-panels":                   { backgroundColor: "var(--bg)", color: "var(--fg)" },
+  ".cm-searchMatch":              { backgroundColor: "color-mix(in srgb, var(--accent) 30%, transparent)" },
+})
+
+const mdHighlight = HighlightStyle.define([
+  { tag: t.heading1,    color: "var(--fg)",       fontSize: "1.4em", fontWeight: "600" },
+  { tag: t.heading2,    color: "var(--fg)",       fontSize: "1.2em", fontWeight: "600" },
+  { tag: [t.heading3, t.heading4, t.heading5, t.heading6],
+                        color: "var(--fg)",       fontWeight: "600" },
+  { tag: t.strong,      color: "var(--fg)",       fontWeight: "600" },
+  { tag: t.emphasis,    color: "var(--fg)",       fontStyle: "italic" },
+  { tag: t.link,        color: "var(--accent)" },
+  { tag: t.url,         color: "var(--accent)" },
+  { tag: t.monospace,   color: "var(--fg)" },
+  { tag: t.quote,       color: "var(--fg-muted)", fontStyle: "italic" },
+  { tag: t.list,        color: "var(--fg)" },
+  { tag: t.comment,     color: "var(--fg-quiet)", fontStyle: "italic" },
+  { tag: t.meta,        color: "var(--fg-muted)" },
+])
+
+let saveTimer = null
+const view = new EditorView({
+  state: EditorState.create({
+    doc: initial,
+    extensions: [
+      basicSetup,
+      markdown(),
+      syntaxHighlighting(mdHighlight),
+      cmTheme,
+      EditorView.lineWrapping,
+      EditorView.updateListener.of(u => {
+        if (!u.docChanged) return
+        clearTimeout(saveTimer)
+        saveTimer = setTimeout(() => save(u.state.doc.toString()), 350)
+      }),
+    ],
+  }),
+  parent: document.getElementById("editor"),
+})
+
+// Theme handling — outer page authoritative.
+function applyTheme(setting /* "light" | "dark" | "system" */) {
+  if (setting === "system") delete html.dataset.theme
+  else html.dataset.theme = setting
+  localStorage.setItem("theme", setting)
+  document.querySelectorAll("#theme-toggle button").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.themeSet === setting ? "true" : "false")
+  })
+  // CodeMirror reskins via CSS vars automatically; just refresh the preview.
+  try { preview.contentWindow.location.reload() } catch {}
+}
+applyTheme(localStorage.getItem("theme") || "system")
+
+document.querySelectorAll("#theme-toggle button").forEach(b => {
+  b.addEventListener("click", () => applyTheme(b.dataset.themeSet))
+})
+
+// Mode toggle.
+const MODE_KEY = "render-md-mode"
+function setMode(mode) {
+  body.dataset.mode = mode
+  localStorage.setItem(MODE_KEY, mode)
+  document.querySelectorAll("#mode-toggle button").forEach(b => {
+    b.setAttribute("aria-pressed", b.dataset.modeSet === mode ? "true" : "false")
+  })
+  if (mode === "live") {
+    try { preview.contentWindow.location.reload() } catch {}
+  } else {
+    view.focus()
+  }
+}
+setMode(localStorage.getItem(MODE_KEY) || "live")
+document.querySelectorAll("#mode-toggle button").forEach(b => {
+  b.addEventListener("click", () => setMode(b.dataset.modeSet))
+})
+
+// Cmd/Ctrl-E toggles mode.
+window.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "e") {
+    e.preventDefault()
+    setMode(body.dataset.mode === "raw" ? "live" : "raw")
+  }
+})
+</script>
+</body></html>

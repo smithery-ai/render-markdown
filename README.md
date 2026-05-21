@@ -1,6 +1,6 @@
 # render-markdown
 
-Render a local markdown file to a polished HTML preview and open it in the browser. Typography tuned against Linear, Notion, and Stripe Docs.
+Why choose between markdown and HTML when you can render markdown in HTML? This skill lets your local coding agents render your markdown files with rich preview + a live CodeMirror editor. Supports task lists, footnotes, mermaid and more. Install the skill and type `/render-markdown`.
 
 ## Install
 
@@ -8,20 +8,27 @@ Render a local markdown file to a polished HTML preview and open it in the brows
 npx skills add smithery-ai/render-markdown
 ```
 
-Then ask Claude to "preview this md" or "open the handoff in html".
+## Two modes
+
+- **One-shot preview** — render once to `/tmp/preview.html` and open it in the browser. Static, self-contained file.
+- **Live editor** — spin up a tiny local server with a CodeMirror editor (read mode + raw mode, `Cmd-E` to toggle). Edits autosave to the source file; the preview hot-reloads.
 
 ## How it works
 
 ```
-  input.md ──▶ strip frontmatter ──▶ marked + GFM + footnotes ──▶ /tmp/preview.html ──▶ open
-                                     highlight.js
-                                     ```mermaid (CDN, lazy)
+input.md
+├── strip frontmatter
+├── marked (GFM + footnotes)
+│   ├── highlight.js
+│   └── mermaid (CDN, lazy)
+└── output
+    ├── /tmp/preview.html → open          (one-shot)
+    └── localhost:7780/   → CodeMirror    (live)
 ```
 
-- Warm light + warm dark themes, sun/monitor/moon toggle (persists in localStorage)
-- 680px measure, 16px/1.6 body, size-dependent heading tracking, alpha-of-text borders
 - Footnotes, GFM task lists, tables, mermaid diagrams, syntax-highlighted code
-- Single self-contained HTML output
+- Warm light + warm dark themes, sun/system/moon toggle (persists in localStorage)
+- Single self-contained HTML output in one-shot mode
 
 ## Contributing
 

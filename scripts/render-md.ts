@@ -22,6 +22,14 @@ import { readFileSync, writeFileSync } from "node:fs"
 import { marked } from "marked"
 import markedFootnote from "marked-footnote"
 import hljs from "highlight.js"
+// Mermaid's headless parser path calls DOMPurify.addHook eagerly even for
+// diagram types we never render server-side. Stub it before mermaid loads
+// so parse() works without a DOM.
+import DOMPurify from "dompurify"
+;(DOMPurify as any).addHook ??= () => {}
+;(DOMPurify as any).sanitize ??= (x: string) => x
+;(DOMPurify as any).removeHook ??= () => {}
+const mermaid = (await import("mermaid")).default
 
 import styles from "./styles.css" with { type: "text" }
 import themeToggle from "./theme-toggle.html" with { type: "text" }
@@ -50,6 +58,29 @@ marked.use({
 marked.setOptions({ gfm: true, breaks: false })
 
 const PRE_THEME_SCRIPT = `(function(){var t=localStorage.getItem('theme');if(t&&t!=='system')document.documentElement.dataset.theme=t})()`
+
+interface MermaidIssue {
+	index: number
+	message: string
+}
+
+async function validateMermaidBlocks(src: string): Promise<MermaidIssue[]> {
+	const issues: MermaidIssue[] = []
+	const blocks = [...src.matchAll(/```mermaid\n([\s\S]*?)\n```/g)]
+	for (let i = 0; i < blocks.length; i++) {
+		const code = blocks[i][1]
+		if (/<br\s*\/?>/i.test(code)) {
+			issues.push({ index: i + 1, message: "uses <br/> in label — forbidden; use a shorter label or split nodes" })
+			continue
+		}
+		try {
+			await mermaid.parse(code)
+		} catch (e: any) {
+			issues.push({ index: i + 1, message: (e?.message ?? String(e)).split("\n").slice(0, 4).join("\n") })
+		}
+	}
+	return issues
+}
 
 async function renderToHtml(src: string, opts: { embed?: boolean } = {}): Promise<string> {
 	const fmMatch = src.match(/^---\n([\s\S]*?)\n---\n/)
@@ -140,6 +171,12 @@ if (args[0] === "serve") {
 	}
 	const outPath = args[1] ?? "/tmp/preview.html"
 	const src = readFileSync(inputPath, "utf8")
+	const issues = await validateMermaidBlocks(src)
+	if (issues.length) {
+		console.error(`mermaid validation failed (${issues.length} issue${issues.length > 1 ? "s" : ""}):`)
+		for (const it of issues) console.error(`  block #${it.index}: ${it.message}`)
+		process.exit(1)
+	}
 	const html = await renderToHtml(src)
 	writeFileSync(outPath, html)
 	console.log(outPath)

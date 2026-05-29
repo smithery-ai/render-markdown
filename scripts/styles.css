@@ -11,6 +11,17 @@
   --accent: #b8521a;
   --accent-hover: #8a3a0e;
   --accent-selection: rgba(184, 82, 26, 0.18);
+  /* Literal aliases for beautiful-mermaid. It writes the option value onto
+     the <svg> as --bg/--fg/--accent, so passing var(--bg) there would be a
+     self-referential cycle (resolves invalid → fills fall back to black).
+     These hold literals (per theme) to break the cycle while still switching. */
+  --mm-bg: #fbf8f3;
+  --mm-fg: #1c1814;
+  --mm-accent: #b8521a;
+  /* Secondary/muted diagram text. beautiful-mermaid derives these at 40-60%
+     fg over bg, which is too faint to read in a schema box — pin a solid,
+     high-contrast value instead. */
+  --mm-muted: #423b33;
   --code-pre-bg: #0a0c10;
   --code-pre-fg: #d8dde4;
 }
@@ -27,6 +38,10 @@
     --accent: #e89060;
     --accent-hover: #f4a574;
     --accent-selection: rgba(232, 144, 96, 0.22);
+    --mm-bg: #14110d;
+    --mm-fg: #ede4d3;
+    --mm-accent: #e89060;
+    --mm-muted: #cabfae;
     --code-pre-bg: #0a0807;
     --code-pre-fg: #e0d8c8;
   }
@@ -43,6 +58,10 @@
   --accent: #e89060;
   --accent-hover: #f4a574;
   --accent-selection: rgba(232, 144, 96, 0.22);
+  --mm-bg: #14110d;
+  --mm-fg: #ede4d3;
+  --mm-accent: #e89060;
+  --mm-muted: #cabfae;
   --code-pre-bg: #0a0807;
   --code-pre-fg: #e0d8c8;
 }
@@ -145,7 +164,10 @@ section.footnotes p { margin: .2em 0; display: inline; }
 sup a, a.footref { text-decoration: none; border: 0; color: var(--accent); font-weight: 500; font-size: .85em; }
 a.footref:before { content: "["; } a.footref:after { content: "]"; }
 
-pre.mermaid { background: transparent; border: 0; color: inherit; text-align: center; padding: 16px 0; margin: 1.2em 0; }
+/* Mermaid: inline SVG rendered at build time (beautiful-mermaid). */
+figure.mermaid-svg { margin: 1.4em 0; padding: 0; text-align: center; }
+figure.mermaid-svg svg { max-width: 100%; height: auto; }
+pre.mermaid-error { color: #ef6b73; }
 
 details { border: 1px solid var(--border); border-radius: 6px; padding: .6em .9em; margin: 1em 0; background: var(--surface-soft); }
 details > summary { cursor: pointer; font-weight: 500; color: var(--fg); outline: none; }

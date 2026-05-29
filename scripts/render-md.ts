@@ -25,8 +25,9 @@
  *   notes. Invalid Gherkin falls back to a highlighted code block.
  * - Title comes from `title:` in frontmatter, otherwise from first H1, otherwise "doc".
  *
- * The HTML shell is assembled here; CSS, theme toggle, mermaid bootstrap, and
- * the editor UI live in adjacent files and are inlined via bun text imports.
+ * The HTML shell is assembled here; CSS, theme toggle, and the editor UI live
+ * in adjacent files and are inlined via bun text imports. Mermaid diagrams are
+ * rendered to inline SVG at build time via beautiful-mermaid (no client JS).
  */
 import { readFileSync, writeFileSync } from "node:fs"
 import { extname } from "node:path"
@@ -40,20 +41,57 @@ import {
 	Parser as GherkinParser,
 } from "@cucumber/gherkin"
 import { IdGenerator } from "@cucumber/messages"
-// Mermaid's headless parser path calls DOMPurify.addHook eagerly even for
-// diagram types we never render server-side. Stub it before mermaid loads
-// so parse() works without a DOM.
-import DOMPurify from "dompurify"
-;(DOMPurify as any).addHook ??= () => {}
-;(DOMPurify as any).sanitize ??= (x: string) => x
-;(DOMPurify as any).removeHook ??= () => {}
-const mermaid = (await import("mermaid")).default
+// Mermaid diagrams are rendered to inline SVG at build time via
+// beautiful-mermaid — synchronous, zero DOM deps, no CDN. Colors are passed
+// as CSS variables so the page's light/dark toggle drives the diagram live
+// (beautiful-mermaid emits them as custom properties on the <svg>, no
+// re-render needed).
+import { renderMermaidSVG } from "beautiful-mermaid"
 
 import styles from "./styles.css" with { type: "text" }
 import themeToggle from "./theme-toggle.html" with { type: "text" }
-import mermaidInit from "./mermaid-init.js" with { type: "text" }
 import editorHtml from "./editor.html" with { type: "text" }
 import copyButton from "./copy-button.js" with { type: "text" }
+
+// Mono mode: pass only solid bg/fg (+ a solid accent) and let beautiful-mermaid
+// derive the text tiers (secondary, muted, faint), node fills, and strokes as
+// solid color-mix() blends. Do NOT pass muted/surface/border/line from our
+// design tokens — those are low-alpha rgba (e.g. --fg-muted is 0.62 alpha), and
+// beautiful-mermaid maps `muted` straight onto the secondary/muted TEXT color,
+// which washes the labels out. --bg/--fg/--accent are solid hex, so the
+// derivations land at proper contrast and still track the light/dark toggle.
+//
+// `font` must be a SINGLE family name — beautiful-mermaid emits
+// `font-family: '<font>', system-ui, sans-serif`, so a multi-family stack here
+// becomes an invalid quoted value and the browser falls back to a font whose
+// glyph widths don't match the measured boxes (text overlap). "Inter" is what
+// its text-metrics are tuned for; it degrades to system-ui.
+// --mm-* are literal-valued aliases (styles.css) so beautiful-mermaid can write
+// them onto the <svg> as --bg/--fg/--accent without a self-referential cycle.
+const MERMAID_OPTS = {
+	bg: "var(--mm-bg)",
+	fg: "var(--mm-fg)",
+	accent: "var(--mm-accent)",
+	muted: "var(--mm-muted)",
+	font: "Inter",
+	transparent: true,
+	padding: 24,
+}
+
+function renderMermaidBlock(code: string): { svg?: string; error?: string } {
+	try {
+		// beautiful-mermaid injects a Google Fonts @import for the diagram
+		// font. Strip it so the page stays self-contained / offline — the SVG
+		// geometry is fully inline, and the text falls back to system-ui.
+		const svg = renderMermaidSVG(code, MERMAID_OPTS).replace(
+			/@import url\('https:\/\/fonts\.googleapis\.com[^']*'\);?/g,
+			"",
+		)
+		return { svg }
+	} catch (e: any) {
+		return { error: (e?.message ?? String(e)).split("\n").slice(0, 5).join("\n") }
+	}
+}
 
 marked.use(markedFootnote())
 marked.use({
@@ -62,8 +100,12 @@ marked.use({
 			const code: string = token.text ?? ""
 			const lang: string = (token.lang ?? "").split(/\s+/)[0]
 			if (lang === "mermaid") {
-				const escaped = code.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-				return `<pre class="mermaid">${escaped}</pre>\n`
+				const { svg, error } = renderMermaidBlock(code)
+				if (error) {
+					const safe = error.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+					return `<pre class="mermaid-error"><code>mermaid render failed:\n${safe}</code></pre>\n`
+				}
+				return `<figure class="mermaid-svg">${svg}</figure>\n`
 			}
 			const out =
 				lang && hljs.getLanguage(lang)
@@ -82,20 +124,12 @@ interface MermaidIssue {
 	message: string
 }
 
-async function validateMermaidBlocks(src: string): Promise<MermaidIssue[]> {
+function validateMermaidBlocks(src: string): MermaidIssue[] {
 	const issues: MermaidIssue[] = []
 	const blocks = [...src.matchAll(/```mermaid\n([\s\S]*?)\n```/g)]
 	for (let i = 0; i < blocks.length; i++) {
-		const code = blocks[i][1]
-		if (/<br\s*\/?>/i.test(code)) {
-			issues.push({ index: i + 1, message: "uses <br/> in label — forbidden; use a shorter label or split nodes" })
-			continue
-		}
-		try {
-			await mermaid.parse(code)
-		} catch (e: any) {
-			issues.push({ index: i + 1, message: (e?.message ?? String(e)).split("\n").slice(0, 4).join("\n") })
-		}
+		const { error } = renderMermaidBlock(blocks[i][1])
+		if (error) issues.push({ index: i + 1, message: error })
 	}
 	return issues
 }
@@ -254,8 +288,10 @@ function gherkinStepClass(keyword: string): string {
 
 function gherkinStepText(text: string): string {
 	let s = escapeHtml(text)
-	// Highlight <placeholders> (escaped to &lt;..&gt;) and "quoted literals".
+	// Highlight <placeholders> (escaped to &lt;..&gt;), "quoted literals", and
+	// `backticked` identifiers (rendered as inline code).
 	s = s.replace(/&lt;([^&]+?)&gt;/g, '<span class="gh-ph">&lt;$1&gt;</span>')
+	s = s.replace(/`([^`]+)`/g, "<code>$1</code>")
 	s = s.replace(/"([^"]*)"/g, '<span class="gh-str">"$1"</span>')
 	return s
 }
@@ -267,19 +303,46 @@ function gherkinTags(tags: any[] | undefined): string {
 		.join("")}</div>`
 }
 
-function gherkinDesc(desc: string | undefined): string {
-	if (!desc) return ""
-	const lines = desc
+function gherkinProse(text: string): string {
+	const lines = text
 		.replace(/^\n+/, "")
 		.replace(/\n+$/, "")
 		.split("\n")
 		.map((l) => l.trim())
+	if (lines.every((l) => l === "")) return ""
 	return `<p class="gh-desc">${lines.map(escapeHtml).join("<br>")}</p>`
 }
 
-function gherkinTable(rows: any[] | undefined): string {
+// A Feature/Scenario description is free text, so it may embed a ```mermaid
+// fenced block. Render those as inline SVG (schema/architecture diagrams live
+// right in the spec); prose around them stays as paragraphs.
+function gherkinDesc(desc: string | undefined): string {
+	if (!desc) return ""
+	const trimmed = desc.replace(/^\n+/, "").replace(/\n+$/, "")
+	const re = /```mermaid\n([\s\S]*?)```/g
+	const parts: string[] = []
+	let last = 0
+	let m: RegExpExecArray | null
+	while ((m = re.exec(trimmed)) !== null) {
+		parts.push(gherkinProse(trimmed.slice(last, m.index)))
+		const { svg, error } = renderMermaidBlock(m[1].replace(/\n+$/, ""))
+		parts.push(
+			error
+				? `<pre class="mermaid-error"><code>${escapeHtml(error)}</code></pre>`
+				: `<figure class="mermaid-svg">${svg}</figure>`,
+		)
+		last = re.lastIndex
+	}
+	parts.push(gherkinProse(trimmed.slice(last)))
+	return parts.filter(Boolean).join("")
+}
+
+function gherkinTable(rows: any[] | undefined, caption?: string): string {
 	if (!rows || rows.length === 0) return ""
 	const [head, ...body] = rows
+	const cap = caption
+		? `<caption class="gh-table-cap">${escapeHtml(caption)}</caption>`
+		: ""
 	const th = head.cells.map((c: any) => `<th>${escapeHtml(c.value)}</th>`).join("")
 	const trs = body
 		.map(
@@ -287,13 +350,18 @@ function gherkinTable(rows: any[] | undefined): string {
 				`<tr>${r.cells.map((c: any) => `<td>${escapeHtml(c.value)}</td>`).join("")}</tr>`,
 		)
 		.join("")
-	return `<table class="gh-table"><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`
+	return `<table class="gh-table">${cap}<thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`
 }
 
 function gherkinStep(step: any): string {
 	const kw = step.keyword.trim()
 	let out = `<div class="gh-step"><span class="gh-kw ${gherkinStepClass(kw)}">${escapeHtml(kw)}</span> <span class="gh-text">${gherkinStepText(step.text)}</span></div>`
-	if (step.dataTable) out += gherkinTable(step.dataTable.rows)
+	if (step.dataTable) {
+		// A `backticked` identifier in the step text captions the attached
+		// data table — e.g. the table/entity name shown on top of the values.
+		const caption = (step.text.match(/`([^`]+)`/) ?? [])[1]
+		out += gherkinTable(step.dataTable.rows, caption)
+	}
 	if (step.docString)
 		out += `<pre class="gh-docstring"><code>${escapeHtml(step.docString.content)}</code></pre>`
 	return out
@@ -423,6 +491,7 @@ const GHERKIN_EXTRA_STYLES = `
 .gh-examples-label { font-size: .85em; text-transform: uppercase; letter-spacing: .06em; color: var(--fg-muted); font-weight: 600; margin-bottom: .2em; }
 .gh-table { width: auto; font-size: .9em; }
 .gh-table th, .gh-table td { padding: 5px 14px 5px 0; }
+.gh-table-cap { caption-side: top; text-align: left; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .9em; font-weight: 600; color: var(--accent); padding-bottom: 6px; }
 .gh-docstring { margin: .5em 0 .5em 14px; }
 `
 
@@ -458,10 +527,6 @@ async function renderToHtml(src: string, opts: { embed?: boolean; format?: "mark
 
 	const rendered = bodyHtml
 
-	const mermaidBlock = /<pre class="mermaid">/.test(rendered)
-		? `<script type="module">${mermaidInit}</script>`
-		: ""
-
 	const embedStyle = opts.embed
 		? `<style>.theme-toggle{display:none}body{background:transparent}</style>`
 		: ""
@@ -477,7 +542,6 @@ async function renderToHtml(src: string, opts: { embed?: boolean; format?: "mark
 ${themeToggle}
 ${fmBlock}
 ${rendered}
-${mermaidBlock}
 <script>${copyButton}</script>
 </body></html>`
 }
@@ -545,7 +609,7 @@ if (args[0] === "serve") {
 	const src = readFileSync(inputPath, "utf8")
 	const format = detectFormat(inputPath)
 	if (format === "markdown") {
-		const issues = await validateMermaidBlocks(src)
+		const issues = validateMermaidBlocks(src)
 		if (issues.length) {
 			console.error(`mermaid validation failed (${issues.length} issue${issues.length > 1 ? "s" : ""}):`)
 			for (const it of issues) console.error(`  block #${it.index}: ${it.message}`)

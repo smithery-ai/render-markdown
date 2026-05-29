@@ -70,8 +70,14 @@ editor page owns it).
 - **`.md`** — YAML frontmatter is stripped (so `marked` doesn't promote it
   to a giant heading via setext rules), the body is rendered with GFM and
   footnotes, code blocks are syntax-highlighted via `highlight.js`, and
-  ` ```mermaid ` fenced blocks render as real diagrams via the Mermaid ESM
-  bundle (CDN, loaded only when a mermaid block is present).
+  ` ```mermaid ` fenced blocks render to **inline SVG at build time** via
+  `beautiful-mermaid` — synchronous, no CDN, no client JS. Diagram colors
+  are passed as CSS variables (`var(--bg)`, `var(--fg)`, `var(--accent)`,
+  …) matching the page's design tokens, so the light/dark toggle drives the
+  diagram live with no re-render. Supports flowchart/state/sequence/class/ER
+  /xy with standard Mermaid syntax; `erDiagram` and `classDiagram` make this
+  good for schema and architecture diagrams. An invalid diagram renders an
+  inline error block (and fails the one-shot build with a non-zero exit).
 - **`.yaml` / `.yml`** — rendered as a structured document: top-level keys
   become sections, nested objects nest by heading level, lists of objects
   render as numbered cards, multi-line scalars are treated as markdown.
@@ -85,15 +91,14 @@ editor page owns it).
 
 ### File layout
 
-The script is split across five files in `scripts/`, inlined at render
-time via bun's `import x from "./foo.ext" with { type: "text" }` syntax:
+The script is split across files in `scripts/`, inlined at render time via
+bun's `import x from "./foo.ext" with { type: "text" }` syntax:
 
 | File | Role |
 |---|---|
-| `render-md.ts` | Markdown → HTML assembly + `serve` subcommand (Bun.serve). |
-| `styles.css` | Prose design tokens, light/dark themes, code, tables, footnotes, in-preview theme toggle. |
+| `render-md.ts` | Markdown/YAML/Gherkin → HTML assembly + `serve` subcommand (Bun.serve). Mermaid → inline SVG via `beautiful-mermaid`. |
+| `styles.css` | Prose design tokens, light/dark themes, code, tables, footnotes, mermaid SVG, in-preview theme toggle. |
 | `theme-toggle.html` | Sun / monitor / moon toggle markup + persistence script (used inside the preview HTML). |
-| `mermaid-init.js` | Mermaid bootstrap with theme-aware initialization. |
 | `editor.html` | Server-mode UI: CodeMirror (via esm.sh import map), mode toggle, theme toggle, autosave. |
 
 Edit any one concern in isolation; no build step. If you change
@@ -131,12 +136,14 @@ stay consistent across previews.
 
 ## Dependencies
 
-- `bun` on PATH. The script imports `marked`, `marked-footnote`, and
-  `highlight.js` — bun auto-installs them on first run. `import … with
+- `bun` on PATH. The script imports `marked`, `marked-footnote`,
+  `highlight.js`, `yaml`, `@cucumber/gherkin`, `@cucumber/messages`, and
+  `beautiful-mermaid` — bun auto-installs them on first run. `import … with
   { type: "text" }` for the adjacent CSS/HTML/JS files requires bun ≥ 1.1.
 - `open` (macOS) for one-shot mode — substitute `xdg-open` on Linux or
   `start` on Windows.
-- Network on first render of a doc with mermaid (Mermaid ESM via CDN).
-  Server mode also loads CodeMirror from `esm.sh` (with an import map
-  pinning shared CodeMirror deps to dedupe state across packages).
-  Re-renders cache the bundles in the browser.
+- Mermaid diagrams render server-side to inline SVG via `beautiful-mermaid`,
+  so a doc with diagrams needs **no network at view time** and works
+  offline. Server mode still loads CodeMirror from `esm.sh` (with an import
+  map pinning shared CodeMirror deps to dedupe state across packages);
+  re-renders cache the bundles in the browser.

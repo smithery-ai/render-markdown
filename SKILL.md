@@ -1,6 +1,6 @@
 ---
 name: render-markdown
-description: Render a local markdown (.md), YAML (.yaml/.yml), or Gherkin (.feature) file to a styled HTML page — either one-shot (static file, open in browser) or as a live CodeMirror editor on a local server with read/raw mode toggle and autosave. Use whenever the user wants to preview such a file (handoff doc, README, design note, planning checklist, config YAML, a Cucumber/Gherkin .feature spec, anything with YAML frontmatter or GFM task-list checkboxes) without launching a dev server or a heavy editor. Use the server mode when the user wants to iterate on the source live, switch between rendered and raw, or share a localhost preview. Triggers on phrases like "open this in html", "preview the md", "render this doc", "render the feature file", "preview the gherkin", "open as a webpage", "render and open", "open the handoff in html", "view this in browser", "edit this md live", "serve this markdown", "spin up the editor".
+description: Render a local markdown (.md), YAML (.yaml/.yml), Gherkin (.feature), or decision-note (.design) file to a styled HTML page — either one-shot (static file, open in browser) or as a live CodeMirror editor on a local server with read/raw mode toggle and autosave. Use whenever the user wants to preview such a file (handoff doc, README, design note, planning checklist, config YAML, a Cucumber/Gherkin .feature spec, a .design decision note, anything with YAML frontmatter or GFM task-list checkboxes) without launching a dev server or a heavy editor. Use the server mode when the user wants to iterate on the source live, switch between rendered and raw, or share a localhost preview. Triggers on phrases like "open this in html", "preview the md", "render this doc", "render the feature file", "preview the gherkin", "render the design note", "open as a webpage", "render and open", "open the handoff in html", "view this in browser", "edit this md live", "serve this markdown", "spin up the editor".
 ---
 
 # Render markdown
@@ -69,7 +69,8 @@ editor page owns it).
 
 - **`.md`** — YAML frontmatter is stripped (so `marked` doesn't promote it
   to a giant heading via setext rules), the body is rendered with GFM and
-  footnotes, code blocks are syntax-highlighted via `highlight.js`, and
+  footnotes, code blocks are syntax-highlighted via `highlight.js` and get a
+  hover-to-copy button (`copy-button.js`, mermaid blocks skipped), and
   ` ```mermaid ` fenced blocks render to **inline SVG at build time** via
   `beautiful-mermaid` — synchronous, no CDN, no client JS. Diagram colors
   are passed as CSS variables (`var(--bg)`, `var(--fg)`, `var(--accent)`,
@@ -88,6 +89,14 @@ editor page owns it).
   tags as chips, and comments (including a `# backed-by:` header) as muted
   notes. Invalid Gherkin falls back to a syntax-highlighted code block so
   the file stays legible and the parse error is easy to spot.
+- **`.design`** — a crisp decision note (one Y-statement clause per line)
+  with a fixed keyword vocabulary, rendered hierarchically with color-coded
+  keywords like Gherkin. Section keywords: `Context:` (forces), `Choose:`
+  (decision), `Over:` (alternatives rejected), `Because:` (rationale),
+  `So:` (consequences), `Not:` (non-goals). `Key: value` metadata rows
+  (`Status`, `Backs`, `Lineage`, `Owner`, `Date`, `Supersedes`) render as a
+  muted monospace header, `# ` sets the title, `- ` lines become clause
+  bullets, and ` ```mermaid ` blocks render to inline SVG as elsewhere.
 
 ### File layout
 
@@ -96,10 +105,11 @@ bun's `import x from "./foo.ext" with { type: "text" }` syntax:
 
 | File | Role |
 |---|---|
-| `render-md.ts` | Markdown/YAML/Gherkin → HTML assembly + `serve` subcommand (Bun.serve). Mermaid → inline SVG via `beautiful-mermaid`. |
-| `styles.css` | Prose design tokens, light/dark themes, code, tables, footnotes, mermaid SVG, in-preview theme toggle. |
+| `render-md.ts` | Markdown/YAML/Gherkin/Design → HTML assembly + `serve` subcommand (Bun.serve). Format chosen by extension in `detectFormat`. Mermaid → inline SVG via `beautiful-mermaid`. |
+| `styles.css` | Prose design tokens, light/dark themes, code, tables, footnotes, mermaid SVG, copy button, in-preview theme toggle. |
 | `theme-toggle.html` | Sun / monitor / moon toggle markup + persistence script (used inside the preview HTML). |
 | `editor.html` | Server-mode UI: CodeMirror (via esm.sh import map), mode toggle, theme toggle, autosave. |
+| `copy-button.js` | Hover-to-copy button injected onto every `<pre>` code block in the preview (mermaid blocks skipped). |
 
 Edit any one concern in isolation; no build step. If you change
 `styles.css` or `editor.html`, restart the server (`bun run … serve`) —

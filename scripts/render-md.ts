@@ -495,7 +495,136 @@ const GHERKIN_EXTRA_STYLES = `
 .gh-docstring { margin: .5em 0 .5em 14px; }
 `
 
-async function renderToHtml(src: string, opts: { embed?: boolean; format?: "markdown" | "yaml" | "gherkin" } = {}): Promise<string> {
+/* ── .design rendering ──────────────────────────────────────────────────────
+ *
+ * A .design file is a crisp decision note (a line-per-line Y-statement): a
+ * small fixed keyword vocabulary, one clause per line, rendered hierarchically
+ * with color-coded keywords like Gherkin. Keywords:
+ *   Context:  the forces (given)        Because: the load-bearing rationale
+ *   Choose:   the decision              So:      the consequences
+ *   Over:     alternatives rejected     Not:     non-goals
+ * Plus `Key: value` metadata rows (Status, Backs, …) and ```mermaid blocks.
+ */
+
+const DESIGN_META = new Set(["Status", "Backs", "Lineage", "Owner", "Date", "Supersedes"])
+const DESIGN_SECTIONS: Record<string, string> = {
+	Context: "ds-context",
+	Choose: "ds-choose",
+	Over: "ds-over",
+	Because: "ds-because",
+	So: "ds-so",
+	Not: "ds-not",
+}
+
+function designClause(text: string): string {
+	let s = escapeHtml(text)
+	s = s.replace(/`([^`]+)`/g, "<code>$1</code>")
+	return s
+}
+
+function renderDesignToBody(src: string): { body: string; title: string } {
+	const lines = src.replace(/\r/g, "").split("\n")
+	let title = "design"
+	const parts: string[] = []
+	let clauses: string[] = []
+	const flush = () => {
+		if (clauses.length) {
+			parts.push(
+				`<ul class="ds-clauses">${clauses.map((c) => `<li>${c}</li>`).join("")}</ul>`,
+			)
+			clauses = []
+		}
+	}
+	let i = 0
+	while (i < lines.length) {
+		const t = lines[i].trim()
+		if (t.startsWith("```mermaid")) {
+			flush()
+			const buf: string[] = []
+			i++
+			while (i < lines.length && lines[i].trim() !== "```") {
+				buf.push(lines[i])
+				i++
+			}
+			i++
+			const { svg, error } = renderMermaidBlock(buf.join("\n"))
+			parts.push(
+				error
+					? `<pre class="mermaid-error"><code>${escapeHtml(error)}</code></pre>`
+					: `<figure class="mermaid-svg">${svg}</figure>`,
+			)
+			continue
+		}
+		if (t.startsWith("# ")) {
+			flush()
+			title = t.slice(2).trim()
+			parts.push(`<h1 class="ds-title">${escapeHtml(title)}</h1>`)
+			i++
+			continue
+		}
+		if (t === "") {
+			flush()
+			i++
+			continue
+		}
+		if (t.startsWith("- ")) {
+			clauses.push(designClause(t.slice(2)))
+			i++
+			continue
+		}
+		const m = t.match(/^([A-Za-z][A-Za-z ]*?):\s*(.*)$/)
+		if (m) {
+			const kw = m[1].trim()
+			const rest = m[2]
+			const base = kw.split(" ")[0]
+			if (DESIGN_META.has(kw)) {
+				flush()
+				parts.push(
+					`<div class="ds-meta"><span class="ds-meta-k">${escapeHtml(kw)}</span> <span class="ds-meta-v">${designClause(rest)}</span></div>`,
+				)
+				i++
+				continue
+			}
+			if (DESIGN_SECTIONS[base]) {
+				flush()
+				parts.push(
+					`<div class="ds-section"><span class="ds-kw ${DESIGN_SECTIONS[base]}">${escapeHtml(kw)}</span>${rest ? ` <span class="ds-subtitle">${designClause(rest)}</span>` : ""}</div>`,
+				)
+				i++
+				continue
+			}
+		}
+		flush()
+		parts.push(`<p class="ds-prose">${designClause(t)}</p>`)
+		i++
+	}
+	flush()
+	return { body: parts.join("\n"), title }
+}
+
+const DESIGN_EXTRA_STYLES = `
+:root { --ds-blue: #3b6fb0; --ds-green: #3a8c5a; --ds-red: #b3452f; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ds-blue: #82aaff; --ds-green: #7bc089; --ds-red: #ef6b73; } }
+:root[data-theme="dark"] { --ds-blue: #82aaff; --ds-green: #7bc089; --ds-red: #ef6b73; }
+.ds-title { margin: 0 0 .4em; }
+.ds-meta { font: 12.5px/1.7 ui-monospace, "SF Mono", Menlo, monospace; color: var(--fg-muted); }
+.ds-meta-k { color: var(--fg-quiet); display: inline-block; min-width: 5em; }
+.ds-section { margin: 1.6em 0 .3em; }
+.ds-kw { font-weight: 700; font-size: 1.05em; letter-spacing: -.01em; }
+.ds-context { color: var(--ds-blue); }
+.ds-choose { color: var(--accent); }
+.ds-because { color: var(--accent); }
+.ds-over { color: var(--fg-muted); }
+.ds-so { color: var(--ds-green); }
+.ds-not { color: var(--ds-red); }
+.ds-subtitle { color: var(--fg-muted); font-weight: 400; }
+.ds-clauses { list-style: none; padding-left: 1.2em; margin: .2em 0 .2em; }
+.ds-clauses li { position: relative; padding: .12em 0; line-height: 1.55; }
+.ds-clauses li::before { content: ""; position: absolute; left: -1.1em; top: .9em; width: .55em; border-top: 1px solid var(--border-strong); }
+.ds-prose { color: var(--fg-muted); margin: .5em 0; }
+`
+
+async function renderToHtml(src: string, opts: { embed?: boolean; format?: "markdown" | "yaml" | "gherkin" | "design" } = {}): Promise<string> {
 	const format = opts.format ?? "markdown"
 
 	let title: string
@@ -508,6 +637,10 @@ async function renderToHtml(src: string, opts: { embed?: boolean; format?: "mark
 		title = t.replace(/</g, "&lt;")
 	} else if (format === "gherkin") {
 		const { body, title: t } = renderFeatureToBody(src)
+		bodyHtml = body
+		title = t.replace(/</g, "&lt;")
+	} else if (format === "design") {
+		const { body, title: t } = renderDesignToBody(src)
 		bodyHtml = body
 		title = t.replace(/</g, "&lt;")
 	} else {
@@ -533,11 +666,12 @@ async function renderToHtml(src: string, opts: { embed?: boolean; format?: "mark
 
 	const yamlStyles = format === "yaml" ? `<style>${YAML_EXTRA_STYLES}</style>` : ""
 	const gherkinStyles = format === "gherkin" ? `<style>${GHERKIN_EXTRA_STYLES}</style>` : ""
+	const designStyles = format === "design" ? `<style>${DESIGN_EXTRA_STYLES}</style>` : ""
 
 	return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${title}</title>
 <script>${PRE_THEME_SCRIPT}</script>
-<style>${styles}</style>${yamlStyles}${gherkinStyles}${embedStyle}
+<style>${styles}</style>${yamlStyles}${gherkinStyles}${designStyles}${embedStyle}
 </head><body>
 ${themeToggle}
 ${fmBlock}
@@ -546,10 +680,11 @@ ${rendered}
 </body></html>`
 }
 
-function detectFormat(path: string): "markdown" | "yaml" | "gherkin" {
+function detectFormat(path: string): "markdown" | "yaml" | "gherkin" | "design" {
 	const ext = extname(path).toLowerCase()
 	if (ext === ".yaml" || ext === ".yml") return "yaml"
 	if (ext === ".feature") return "gherkin"
+	if (ext === ".design") return "design"
 	return "markdown"
 }
 
